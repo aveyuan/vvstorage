@@ -19,7 +19,7 @@ type SSO struct {
 	URL      string
 	Appkey   string //Appkey
 	Date     int64  //过期时间
-	Domain   string //用户名
+	Domain   string //sso 目录
 	FileName string //用户ID
 }
 
