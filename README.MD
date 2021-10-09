@@ -10,3 +10,6 @@
 
 ### 传入参数
 randkey+filename+date
+
+文件还是要传入桶
+upload/+桶/+具体的文件
