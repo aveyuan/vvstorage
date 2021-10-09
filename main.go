@@ -5,41 +5,45 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/ini.v1"
 )
 
 type SSO struct {
 	URL      string
 	Appkey   string //Appkey
-	UserName string //用户名
 	Date     int64  //过期时间
-	UserID   string //用户ID
+	Domain   string //用户名
+	FileName string //用户ID
 }
 
 func main() {
+
+	ini, err := ini.Load("app.ini")
+	if err != nil {
+		log.Fatal("配置文件读取出错,请检查", err.Error())
+	}
+
+	sso := SSO{
+		Appkey: GetRandomString(10),
+		Date:   time.Now().Add(30 * time.Second).Unix(),
+	}
+	//得到签名
+	makesigkey := sso.GetSignature(ini.Section("").Key("token").String())
+	//生成登录的地址
+	url := fmt.Sprintf("%v?app_key=%v&domain=%v&date=%v&filename=%v&sign=%v", sso.URL, sso.Appkey, sso.Domain, sso.Date, sso.FileName, makesigkey)
+	fmt.Println(url)
 
 	r := gin.Default()
 
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 	r.POST("/upload", func(c *gin.Context) {
-		sso := SSO{
-			Appkey:   GetRandomString(10),
-			UserName: os.Args[3],
-			Date:     time.Now().Add(30 * time.Second).Unix(),
-			UserID:   os.Args[4],
-			URL:      os.Args[1],
-		}
-		//得到签名
-		makesigkey := sso.GetSignature(os.Args[2])
-		//生成登录的地址
-		url := fmt.Sprintf("%v?app_key=%v&user_name=%v&date=%v&user_id=%v&sign=%v", sso.URL, sso.Appkey, sso.UserName, sso.Date, sso.UserID, makesigkey)
-		fmt.Println(url)
 
 		file, err := c.FormFile("file")
 		if err != nil {
@@ -63,7 +67,7 @@ func main() {
 
 // GetSignature 签名生成
 func (c *SSO) GetSignature(key string) string {
-	toSing := fmt.Sprintf("%v%v%v%v", c.Appkey, c.UserName, c.UserID, c.Date)
+	toSing := fmt.Sprintf("%v%v%v%v", c.Appkey, c.Domain, c.FileName, c.Date)
 	byteSing := []byte(toSing)
 	bas := base64.StdEncoding.EncodeToString(byteSing)
 	mac := hmac.New(sha1.New, []byte(key))
