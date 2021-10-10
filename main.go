@@ -6,22 +6,20 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type SSO struct {
 	Appkey   string `form:"appkey" binding:"required"`    //随机Key
 	Date     int64  `form:"date" binding:"required"`      //过期时间
-	Domain   string `form:"domain" binding:"required"`    //目录
-	FileName string `form:"file_name" binding:"required"` //文件名称
+	FilePath string `form:"file_path" binding:"required"` //文件路径
 	Sign     string `form:"sign" binding:"required"`      //签名
 }
 
@@ -38,10 +36,12 @@ func main() {
 		return gin.ReleaseMode
 	}())
 	r := gin.Default()
-	r.POST("/upload", new(Base).upload)
-	r.Static("/", "/upload")
+	base := new(Base)
+	r.POST("/api_upload", base.upload)
+	r.DELETE("/api_remove", base.Remove)
+	r.Static("/", "./upload")
 	log.Printf("启动成功,主机:%v端口:%v", host, port)
-	r.Run(":8080")
+	r.Run(fmt.Sprintf("%v:%v", host, port))
 }
 
 func init() {
@@ -59,20 +59,57 @@ func init() {
 type Base struct{}
 
 func (t *Base) upload(c *gin.Context) {
-
 	var form SSO
-	c.ShouldBind(&form)
+	c.ShouldBindQuery(&form)
+	log.Print(form)
 
 	file, err := c.FormFile("file")
 	if err != nil {
 		t.RJson(402, "文件获取失败", c)
 		return
 	}
+	log.Print(file.Filename, file.Size)
 
-	if file.Filename != form.FileName {
-		t.RJson(402, "文件比对失败", c)
+	// 验证签名
+	if form.GetSignature(token) != form.Sign {
+		t.RJson(402, "签名验证失败", c)
 		return
 	}
+	dir := "./" + form.FilePath
+
+	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
+		t.RJson(402, "文件夹创建失败", c)
+		return
+	}
+
+	f, err := os.OpenFile(dir, os.O_CREATE|os.O_WRONLY, 0755)
+	if err != nil {
+		log.Print(err)
+		t.RJson(402, "文件创建失败", c)
+		return
+	}
+
+	defer f.Close()
+
+	sf, err := file.Open()
+	if err != nil {
+		t.RJson(402, "文件信息有误", c)
+		return
+	}
+
+	if _, err := io.Copy(f, sf); err != nil {
+		log.Print(err)
+		t.RJson(402, "文件上传失败", c)
+		return
+	}
+
+	t.RJson(200, "文件上传成功", c)
+}
+
+func (t *Base) Remove(c *gin.Context) {
+
+	var form SSO
+	c.ShouldBind(&form)
 
 	// 验证签名
 	if form.GetSignature(token) != form.Sign {
@@ -80,41 +117,17 @@ func (t *Base) upload(c *gin.Context) {
 		return
 	}
 
-	// 开始处理文件
-	pwd, _ := os.Getwd()
-	fTime := time.Now().Format("2006/01/02")
-
-	// 压缩文件
-
-	// 添加水印
-	uuidStr := uuid.New().String()
-	uuid := strings.Replace(uuidStr, "-", "", -1)
-
-	ext := filepath.Ext(file.Filename)
-	newFileName := uuid + ext
-
-	savePath := "/uploads/" + form.Domain + "/" + fTime
-	upPath := savePath + "/" + newFileName
-	fileTime := pwd + savePath
-	// name改为uuid
-	// 计算
-	saveImg := fileTime + "/" + newFileName
-
-	if err := os.MkdirAll(fileTime, 0755); err != nil {
-		t.RJson(402, "文件创建失败", c)
-		return
-	}
-	if err := c.SaveUploadedFile(file, saveImg); err != nil {
-		t.RJson(402, "文件上传失败", c)
+	if err := os.Remove("./" + form.FilePath); err != nil {
+		t.RJson(402, "文件删除失败", c)
 		return
 	}
 
-	t.RJson(200, upPath, c)
+	t.RJson(200, "文件上传成功", c)
 }
 
 // GetSignature 签名生成
 func (c *SSO) GetSignature(key string) string {
-	toSing := fmt.Sprintf("%v%v%v%v", c.Appkey, c.Domain, c.FileName, c.Date)
+	toSing := fmt.Sprintf("%v%v%v", c.Appkey, c.FilePath, c.Date)
 	byteSing := []byte(toSing)
 	bas := base64.StdEncoding.EncodeToString(byteSing)
 	mac := hmac.New(sha1.New, []byte(key))
@@ -124,10 +137,11 @@ func (c *SSO) GetSignature(key string) string {
 }
 
 func (t *Base) RJson(code int, msg interface{}, c *gin.Context) {
-	c.JSON(200, gin.H{
-		"code": 402,
-		"msg":  "文件获取失败",
+	c.JSON(code, gin.H{
+		"code": code,
+		"msg":  msg,
 	})
+	c.Abort()
 }
 
 // GetRandomString 水机字符串生成
