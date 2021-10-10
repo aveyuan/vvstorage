@@ -4,65 +4,112 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gopkg.in/ini.v1"
+	"github.com/google/uuid"
 )
 
 type SSO struct {
-	URL      string
-	Appkey   string //Appkey
-	Date     int64  //过期时间
-	Domain   string //sso 目录
-	FileName string //用户ID
+	Appkey   string `form:"appkey" binding:"required"`    //随机Key
+	Date     int64  `form:"date" binding:"required"`      //过期时间
+	Domain   string `form:"domain" binding:"required"`    //目录
+	FileName string `form:"file_name" binding:"required"` //文件名称
+	Sign     string `form:"sign" binding:"required"`      //签名
 }
 
+var token string
+var debug bool = false
+var host string
+var port int
+
 func main() {
-
-	ini, err := ini.Load("app.ini")
-	if err != nil {
-		log.Fatal("配置文件读取出错,请检查", err.Error())
-	}
-
-	sso := SSO{
-		Appkey: GetRandomString(10),
-		Date:   time.Now().Add(30 * time.Second).Unix(),
-	}
-	//得到签名
-	makesigkey := sso.GetSignature(ini.Section("").Key("token").String())
-	//生成登录的地址
-	url := fmt.Sprintf("%v?app_key=%v&domain=%v&date=%v&filename=%v&sign=%v", sso.URL, sso.Appkey, sso.Domain, sso.Date, sso.FileName, makesigkey)
-	fmt.Println(url)
-
+	gin.SetMode(func() string {
+		if debug {
+			return gin.DebugMode
+		}
+		return gin.ReleaseMode
+	}())
 	r := gin.Default()
-
-	r.MaxMultipartMemory = 8 << 20 // 8 MiB
-	r.POST("/upload", func(c *gin.Context) {
-
-		file, err := c.FormFile("file")
-		if err != nil {
-			c.String(http.StatusBadRequest, fmt.Sprintf("get form err: %s", err.Error()))
-			return
-		}
-
-		basePath := "./upload/"
-		filename := basePath + filepath.Base(file.Filename)
-		if err := c.SaveUploadedFile(file, filename); err != nil {
-			c.String(http.StatusBadRequest, fmt.Sprintf("upload file err: %s", err.Error()))
-			return
-		}
-
-		c.String(http.StatusOK, fmt.Sprintf("文件 %s 上传成功 ", file.Filename))
-	})
-
+	r.POST("/upload", new(Base).upload)
 	r.Static("/", "/upload")
+	log.Printf("启动成功,主机:%v端口:%v", host, port)
 	r.Run(":8080")
+}
+
+func init() {
+	flag.StringVar(&host, "h", "0.0.0.0", "input your host")
+	flag.IntVar(&port, "p", 8001, "input your port")
+	flag.StringVar(&token, "t", "", "input your token")
+	flag.BoolVar(&debug, "d", false, "input your debug default is false")
+	flag.Parse()
+	if token == "" {
+		log.Fatal("token is null")
+		os.Exit(0)
+	}
+}
+
+type Base struct{}
+
+func (t *Base) upload(c *gin.Context) {
+
+	var form SSO
+	c.ShouldBind(&form)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		t.RJson(402, "文件获取失败", c)
+		return
+	}
+
+	if file.Filename != form.FileName {
+		t.RJson(402, "文件比对失败", c)
+		return
+	}
+
+	// 验证签名
+	if form.GetSignature(token) != form.Sign {
+		t.RJson(402, "签名验证失败", c)
+		return
+	}
+
+	// 开始处理文件
+	pwd, _ := os.Getwd()
+	fTime := time.Now().Format("2006/01/02")
+
+	// 压缩文件
+
+	// 添加水印
+	uuidStr := uuid.New().String()
+	uuid := strings.Replace(uuidStr, "-", "", -1)
+
+	ext := filepath.Ext(file.Filename)
+	newFileName := uuid + ext
+
+	savePath := "/uploads/" + form.Domain + "/" + fTime
+	upPath := savePath + "/" + newFileName
+	fileTime := pwd + savePath
+	// name改为uuid
+	// 计算
+	saveImg := fileTime + "/" + newFileName
+
+	if err := os.MkdirAll(fileTime, 0755); err != nil {
+		t.RJson(402, "文件创建失败", c)
+		return
+	}
+	if err := c.SaveUploadedFile(file, saveImg); err != nil {
+		t.RJson(402, "文件上传失败", c)
+		return
+	}
+
+	t.RJson(200, upPath, c)
 }
 
 // GetSignature 签名生成
@@ -74,6 +121,13 @@ func (c *SSO) GetSignature(key string) string {
 	mac.Write([]byte(bas))
 	ssoEncode := fmt.Sprintf("%x", mac.Sum(nil))
 	return string(ssoEncode)
+}
+
+func (t *Base) RJson(code int, msg interface{}, c *gin.Context) {
+	c.JSON(200, gin.H{
+		"code": 402,
+		"msg":  "文件获取失败",
+	})
 }
 
 // GetRandomString 水机字符串生成
