@@ -39,7 +39,7 @@ func main() {
 	base := new(Base)
 	r.POST("/api_upload", base.upload)
 	r.DELETE("/api_remove", base.Remove)
-	r.Static("/", "./upload")
+	r.Static("/uploads", "./uploads")
 	log.Printf("启动成功,主机:%v端口:%v", host, port)
 	r.Run(fmt.Sprintf("%v:%v", host, port))
 }

@@ -12,17 +12,4 @@
 randkey+filename+date
 
 文件还是要传入桶
-upload/+桶/+具体的文件
-
-## todo delete
-		path := "." + one.Value
-		if err := one.Delete(); err != nil {
-			t.ResJSONAndError(402, config.DBDelteErr, err, c)
-			return
-		}
-		if one.Storage == "local" {
-			if err := os.Remove(path); err != nil {
-				t.ResJSON(402, "数据删除成功,文件删除失败", c)
-				return
-			}
-		}
+upload/+具体的文件
