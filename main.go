@@ -28,6 +28,8 @@ var debug bool = false
 var host string
 var port int
 
+const version = "0.1"
+
 func main() {
 	gin.SetMode(func() string {
 		if debug {
@@ -40,18 +42,20 @@ func main() {
 	r.POST("/api_upload", base.upload)
 	r.DELETE("/api_remove", base.Remove)
 	r.Static("/uploads", "./uploads")
-	log.Printf("启动成功,主机:%v端口:%v", host, port)
+	log.Printf("系统启动成功,监听主机:%v 监听端口:%v", host, port)
 	r.Run(fmt.Sprintf("%v:%v", host, port))
 }
 
 func init() {
-	flag.StringVar(&host, "h", "0.0.0.0", "input your host")
-	flag.IntVar(&port, "p", 8001, "input your port")
-	flag.StringVar(&token, "t", "", "input your token")
-	flag.BoolVar(&debug, "d", false, "input your debug default is false")
+	flag.StringVar(&host, "h", "0.0.0.0", "输入监听主机地址 示例: -h 127.0.0.1")
+	flag.IntVar(&port, "p", 8001, "输入监听端口 示例:-p 8001")
+	flag.StringVar(&token, "t", "", "输入token 示例:-t xxxxx")
+	flag.BoolVar(&debug, "d", false, "是否开启debug模式 示例: -d true ")
 	flag.Parse()
+	log.Printf("欢迎使用微微存储，当前版本:%v", version)
+	log.Print("PowerBy:http://www.vvcms.cn 微微CMS提供支持")
 	if token == "" {
-		log.Fatal("token is null")
+		log.Fatal("当前并未配置token，请使用-t 跟上您的秘钥 使用 --help可以获取帮助")
 		os.Exit(0)
 	}
 }
@@ -61,18 +65,22 @@ type Base struct{}
 func (t *Base) upload(c *gin.Context) {
 	var form SSO
 	c.ShouldBindQuery(&form)
-	log.Print(form)
 
-	file, err := c.FormFile("file")
-	if err != nil {
-		t.RJson(402, "文件获取失败", c)
+	// 查看是否过期
+	if time.Now().Unix() > form.Date {
+		t.RJson(402, "签名过期", c)
 		return
 	}
-	log.Print(file.Filename, file.Size)
 
 	// 验证签名
 	if form.GetSignature(token) != form.Sign {
 		t.RJson(402, "签名验证失败", c)
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		t.RJson(402, "文件获取失败", c)
 		return
 	}
 	dir := "./" + form.FilePath
