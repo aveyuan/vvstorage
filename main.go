@@ -40,8 +40,8 @@ func main() {
 	base := new(Base)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api_upload", base.upload)
-	mux.HandleFunc("DELETE /api_remove", base.upload)
-	mux.Handle("GET /uploads", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
+	mux.HandleFunc("DELETE /api_remove", base.Remove)
+	mux.HandleFunc("GET /", http.StripPrefix("/uploads/",http.FileServer(http.Dir("./uploads"))).ServeHTTP)
 	log.Printf("系统启动成功,监听主机:%v 监听端口:%v", host, port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), mux))
 }
