@@ -8,12 +8,18 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
+)
 
-	"github.com/gin-gonic/gin"
+const (
+	Appkey   = "appkey"
+	Date     = "date"
+	FilePath = "file_path"
+	Sign     = "sign"
 )
 
 type SSO struct {
@@ -28,22 +34,16 @@ var debug bool = false
 var host string
 var port int
 
-const version = "0.1"
+const version = "1.0.0"
 
 func main() {
-	gin.SetMode(func() string {
-		if debug {
-			return gin.DebugMode
-		}
-		return gin.ReleaseMode
-	}())
-	r := gin.Default()
 	base := new(Base)
-	r.POST("/api_upload", base.upload)
-	r.DELETE("/api_remove", base.Remove)
-	r.Static("/uploads", "./uploads")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api_upload", base.upload)
+	mux.HandleFunc("DELETE /api_remove", base.upload)
+	mux.Handle("GET /uploads", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
 	log.Printf("系统启动成功,监听主机:%v 监听端口:%v", host, port)
-	r.Run(fmt.Sprintf("%v:%v", host, port))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("%v:%v", host, port), mux))
 }
 
 func init() {
@@ -62,75 +62,122 @@ func init() {
 
 type Base struct{}
 
-func (t *Base) upload(c *gin.Context) {
-	var form SSO
-	c.ShouldBindQuery(&form)
+func (t *Base) upload(w http.ResponseWriter, r *http.Request) {
+	appkey := r.URL.Query().Get(Appkey)
+	date := r.URL.Query().Get(Date)
+	filePath := r.URL.Query().Get(FilePath)
+	sign := r.URL.Query().Get(Sign)
+
+	if appkey == "" || date == "" || filePath == "" || sign == "" {
+		t.RJson(402, "参数错误", w)
+		return
+	}
+
+	// 转换时间
+	dateInt, err := strconv.ParseInt(date, 10, 64)
+	if err != nil {
+		t.RJson(402, "参数错误", w)
+		return
+	}
+
+	form := &SSO{
+		Appkey:   appkey,
+		Date:     dateInt,
+		FilePath: filePath,
+		Sign:     sign,
+	}
 
 	// 查看是否过期
 	if time.Now().Unix() > form.Date {
-		t.RJson(402, "签名过期", c)
+		t.RJson(402, "签名过期", w)
 		return
 	}
 
 	// 验证签名
 	if form.GetSignature(token) != form.Sign {
-		t.RJson(402, "签名验证失败", c)
+		t.RJson(402, "签名验证失败", w)
 		return
 	}
 
-	file, err := c.FormFile("file")
+	_, h, err := r.FormFile("file")
 	if err != nil {
-		t.RJson(402, "文件获取失败", c)
+		t.RJson(402, "文件获取失败", w)
 		return
 	}
 	dir := "./" + form.FilePath
 
 	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
-		t.RJson(402, "文件夹创建失败", c)
+		t.RJson(402, "文件夹创建失败", w)
 		return
 	}
 
 	f, err := os.OpenFile(dir, os.O_CREATE|os.O_WRONLY, 0755)
 	if err != nil {
 		log.Print(err)
-		t.RJson(402, "文件创建失败", c)
+		t.RJson(402, "文件创建失败", w)
 		return
 	}
 
 	defer f.Close()
 
-	sf, err := file.Open()
+	sf, err := h.Open()
 	if err != nil {
-		t.RJson(402, "文件信息有误", c)
+		t.RJson(402, "文件信息有误", w)
 		return
 	}
 
 	if _, err := io.Copy(f, sf); err != nil {
 		log.Print(err)
-		t.RJson(402, "文件上传失败", c)
+		t.RJson(402, "文件上传失败", w)
 		return
 	}
 
-	t.RJson(200, "文件上传成功", c)
+	t.RJson(200, "文件上传成功", w)
 }
 
-func (t *Base) Remove(c *gin.Context) {
+func (t *Base) Remove(w http.ResponseWriter, r *http.Request) {
 
-	var form SSO
-	c.ShouldBind(&form)
+	appkey := r.URL.Query().Get(Appkey)
+	date := r.URL.Query().Get(Date)
+	filePath := r.URL.Query().Get(FilePath)
+	sign := r.URL.Query().Get(Sign)
+
+	if appkey == "" || date == "" || filePath == "" || sign == "" {
+		t.RJson(402, "参数错误", w)
+		return
+	}
+
+	// 转换时间
+	dateInt, err := strconv.ParseInt(date, 10, 64)
+	if err != nil {
+		t.RJson(402, "参数错误", w)
+		return
+	}
+
+	form := &SSO{
+		Appkey:   appkey,
+		Date:     dateInt,
+		FilePath: filePath,
+		Sign:     sign,
+	}
+
+	// 查看是否过期
+	if time.Now().Unix() > form.Date {
+		t.RJson(402, "签名过期", w)
+		return
+	}
 
 	// 验证签名
 	if form.GetSignature(token) != form.Sign {
-		t.RJson(402, "签名验证失败", c)
+		t.RJson(402, "签名验证失败", w)
 		return
 	}
-
 	if err := os.Remove("./" + form.FilePath); err != nil {
-		t.RJson(402, "文件删除失败", c)
+		t.RJson(402, "文件删除失败", w)
 		return
 	}
 
-	t.RJson(200, "文件上传成功", c)
+	t.RJson(200, "文件上传成功", w)
 }
 
 // GetSignature 签名生成
@@ -144,22 +191,8 @@ func (c *SSO) GetSignature(key string) string {
 	return string(ssoEncode)
 }
 
-func (t *Base) RJson(code int, msg interface{}, c *gin.Context) {
-	c.JSON(code, gin.H{
-		"code": code,
-		"msg":  msg,
-	})
-	c.Abort()
-}
-
-// GetRandomString 水机字符串生成
-func GetRandomString(l int) string {
-	str := "0123456789abcdefghijklmnopqrstuvwxyz"
-	bytes := []byte(str)
-	result := []byte{}
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < l; i++ {
-		result = append(result, bytes[r.Intn(len(bytes))])
-	}
-	return string(result)
+func (t *Base) RJson(code int, msg interface{}, w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"code":%v,"msg":"%v"}`, code, msg)))
 }
